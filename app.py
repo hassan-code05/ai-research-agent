@@ -1,4 +1,3 @@
-```python
 import os
 from typing import Type
 
@@ -476,58 +475,3 @@ Please add your Groq API key first.
             )
 
             st.exception(exc)
-```
-
-Now your project is much simpler:
-
-```text
-ai-research-agent/
-├── app.py
-├── requirements.txt
-├── README.md
-├── .gitignore
-└── .streamlit/
-    └── secrets.toml.example
-```
-
-Your `requirements.txt` remains:
-
-```txt
-crewai[openai]==1.15.22
-streamlit==1.65.0
-ddgs==9.16.0
-```
-
-Locally, create:
-
-```text
-.streamlit/secrets.toml
-```
-
-with:
-
-```toml
-GROQ_API_KEY = "your_real_groq_key"
-```
-
-Then run:
-
-```bash
-pip install -r requirements.txt
-```
-
-and:
-
-```bash
-streamlit run app.py
-```
-
-On **Streamlit Community Cloud**, you only select:
-
-```text
-app.py
-```
-
-as the **Main file path**. Streamlit still automatically reads `requirements.txt`, so you do need to upload that too.
-
-This one-file version is the one I'd recommend for your project right now. Once it works, you can split the agent code into separate files later if the project grows.
