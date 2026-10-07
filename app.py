@@ -3,19 +3,17 @@ from typing import Type
 
 import streamlit as st
 from crewai import Agent, Crew, LLM, Process, Task
+from crewai.tools import BaseTool
+from ddgs import DDGS
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------
 # CrewAI 1.15.x + Groq compatibility patch
 # ---------------------------------------------------------
-# CrewAI currently injects a `cache_breakpoint` field into agent
-# messages. Groq does not support that field and returns HTTP 400.
-# This disables that injection for this app.
+# CrewAI can inject a `cache_breakpoint` field into messages.
+# Groq does not support that field, so we disable the injection.
 import crewai.llms.cache as _crewai_cache
 _crewai_cache.mark_cache_breakpoint = lambda message: message
-
-from crewai.tools import BaseTool
-from ddgs import DDGS
-from pydantic import BaseModel, Field
 
 
 # =========================================================
@@ -34,13 +32,11 @@ st.set_page_config(
 # =========================================================
 
 class WebSearchInput(BaseModel):
-    """
-    Defines what input our custom CrewAI search tool expects.
-    """
+    """Input schema for the custom web-search tool."""
 
     query: str = Field(
         ...,
-        description="The search query to look up on the web."
+        description="The web search query to run."
     )
 
 
@@ -49,39 +45,33 @@ class WebSearchInput(BaseModel):
 # =========================================================
 
 class FreeWebSearchTool(BaseTool):
-    """
-    A simple CrewAI tool that performs free web searches using DDGS.
-    """
+    """Free web-search tool using DDGS."""
 
     name: str = "free_web_search"
 
     description: str = (
         "Search the public web for current information. "
         "Returns titles, snippets, and URLs. "
-        "Use this tool whenever you need factual or current information."
+        "Use this tool when factual or current information is needed."
     )
 
     args_schema: Type[BaseModel] = WebSearchInput
 
     def _run(self, query: str) -> str:
-        """
-        Runs the web search.
-        """
+        """Run a web search and return formatted results."""
 
         try:
-            # First try DuckDuckGo directly
             results = DDGS(timeout=10).text(
                 query=query,
-                max_results=6,
+                max_results=5,
                 backend="duckduckgo"
             )
 
         except Exception:
             try:
-                # If DuckDuckGo fails, DDGS can try another free backend
                 results = DDGS(timeout=10).text(
                     query=query,
-                    max_results=6,
+                    max_results=5,
                     backend="auto"
                 )
 
@@ -102,15 +92,13 @@ class FreeWebSearchTool(BaseTool):
             url = item.get("href", "No URL available")
 
             formatted_results.append(
-                f"""
-Result {index}
-Title: {title}
-Snippet: {snippet}
-URL: {url}
-"""
+                f"Result {index}\n"
+                f"Title: {title}\n"
+                f"Snippet: {snippet}\n"
+                f"URL: {url}"
             )
 
-        return "\n".join(formatted_results)
+        return "\n\n".join(formatted_results)
 
 
 # =========================================================
@@ -119,12 +107,8 @@ URL: {url}
 
 def load_api_key():
     """
-    Tries to load GROQ_API_KEY from:
-
-    1. Streamlit secrets
-    2. Environment variables
-
-    Returns None if no key is found.
+    Load GROQ_API_KEY from Streamlit secrets first,
+    then from environment variables.
     """
 
     try:
@@ -138,25 +122,24 @@ def load_api_key():
 
 
 # =========================================================
-# BUILD GROQ LLM
+# CREATE GROQ LLM
 # =========================================================
 
 def create_groq_llm(api_key: str):
     """
-    Creates the Groq LLM used by CrewAI.
+    Create the Groq LLM used by CrewAI.
 
-    We use CrewAI's Groq/LiteLLM route so the full Groq model ID
-    "openai/gpt-oss-120b" is preserved correctly.
+    The 'groq/' prefix tells CrewAI/LiteLLM which provider to use.
+    The actual Groq model ID is openai/gpt-oss-120b.
     """
 
-    # LiteLLM also understands GROQ_API_KEY from the environment.
     os.environ["GROQ_API_KEY"] = api_key
 
     return LLM(
         model="groq/openai/gpt-oss-120b",
         api_key=api_key,
         temperature=0.2,
-        max_tokens=7000,
+        max_tokens=2500,
     )
 
 
@@ -166,13 +149,10 @@ def create_groq_llm(api_key: str):
 
 def run_research(topic: str, api_key: str) -> str:
     """
-    Creates and runs:
-
-    1 Agent
-    1 Task
-    1 Crew
-
-    Then returns the final research report.
+    Create and run:
+    - 1 Agent
+    - 1 Task
+    - 1 Crew
     """
 
     topic = topic.strip()
@@ -181,23 +161,18 @@ def run_research(topic: str, api_key: str) -> str:
         raise ValueError("Please enter a research topic.")
 
     if not api_key:
-        raise ValueError(
-            "Groq API key is missing."
-        )
+        raise ValueError("Groq API key is missing.")
 
-    # Create our Groq LLM
     llm = create_groq_llm(api_key)
 
-    # Create our free web search tool
     search_tool = FreeWebSearchTool()
 
     # =====================================================
-    # CREATE THE SINGLE RESEARCH AGENT
+    # SINGLE RESEARCH AGENT
     # =====================================================
 
     researcher = Agent(
-
-        role="Senior AI Researcher and Report Writer",
+        role="AI Researcher and Report Writer",
 
         goal=(
             "Research the user's topic using current web information, "
@@ -206,12 +181,10 @@ def run_research(topic: str, api_key: str) -> str:
         ),
 
         backstory=(
-            "You are an experienced research analyst. "
-            "You investigate topics carefully using web search. "
-            "You compare information from multiple sources before making "
-            "strong claims. You never invent URLs, sources, statistics, "
-            "or facts. If information is uncertain or conflicting, "
-            "you clearly mention that."
+            "You are a careful research analyst. "
+            "You use web search to investigate topics, compare sources, "
+            "and avoid inventing facts, statistics, URLs, or references. "
+            "If information is uncertain or conflicting, explain that clearly."
         ),
 
         llm=llm,
@@ -222,103 +195,89 @@ def run_research(topic: str, api_key: str) -> str:
 
         verbose=False,
 
-        max_iter=8,
+        # Lower than before to reduce Groq token-per-minute usage.
+        max_iter=4,
     )
 
     # =====================================================
-    # CREATE THE RESEARCH TASK
+    # RESEARCH TASK
     # =====================================================
 
     research_task = Task(
-
         description=f"""
-Research the following topic thoroughly:
+Research the following topic:
 
 TOPIC:
 {topic}
 
-Your instructions:
+Instructions:
 
-1. Use the free_web_search tool multiple times.
-2. Use focused search queries rather than only one broad search.
-3. Prefer current and authoritative sources.
+1. Use the free_web_search tool to find current information.
+2. Perform a few focused searches rather than excessive searches.
+3. Prefer authoritative and recent sources.
 4. Compare multiple sources before making important claims.
 5. Do NOT invent facts, statistics, studies, URLs, or references.
-6. If sources disagree, clearly explain the disagreement.
-7. Write a professional Markdown research report.
+6. If sources disagree, explain the disagreement.
+7. Keep the report useful but reasonably concise.
 
-The report must contain:
+Write the report in Markdown using these sections:
 
 # Title
 
 ## Executive Summary
-
-Provide a concise summary of the topic and the most important findings.
+Summarize the topic and the most important findings.
 
 ## Introduction / Background
-
-Explain the topic and why it is important.
+Explain the topic and why it matters.
 
 ## Key Findings
-
-Present the most important findings clearly.
+List the most important findings.
 
 ## Detailed Discussion
-
-Explain the topic in detail using information from your research.
+Explain the findings in more detail.
 
 ## Important Facts and Evidence
-
-Include useful statistics, evidence, trends, findings, or examples.
+Include useful facts, statistics, trends, or examples found during research.
 
 ## Conclusion
-
 Summarize the overall findings.
 
 ## Sources / References
-
 List the real sources used during research.
 
-For every source, include:
-
+For each source include:
 - Source title
 - Website or organization
 - Real URL
 
-Never create fake URLs or fake references.
+Never invent URLs or references.
 """,
 
         expected_output=(
-            "A complete Markdown research report containing a title, "
-            "executive summary, background, key findings, detailed discussion, "
-            "evidence, conclusion, and real source URLs."
+            "A concise but useful Markdown research report with "
+            "real source URLs."
         ),
 
         agent=researcher,
     )
 
     # =====================================================
-    # CREATE THE CREW
+    # CREW
     # =====================================================
 
     crew = Crew(
-
         agents=[researcher],
-
         tasks=[research_task],
-
         process=Process.sequential,
-
         verbose=False,
     )
 
     # =====================================================
-    # RUN THE CREW
+    # RUN CREW
     # =====================================================
 
     result = crew.kickoff()
 
-    # CrewAI usually provides the final answer inside .raw
     if hasattr(result, "raw"):
         return result.raw
 
@@ -333,7 +292,7 @@ st.title("🔎 AI Research Agent")
 
 st.write(
     """
-Enter any research topic below.
+Enter a research topic below.
 
 A single CrewAI research agent will:
 
@@ -352,25 +311,16 @@ A single CrewAI research agent will:
 
 groq_api_key = load_api_key()
 
-
 if not groq_api_key:
-
     st.warning(
         """
 Groq API key not found.
 
-For local testing, create:
-
-`.streamlit/secrets.toml`
-
-and add:
+For Streamlit Community Cloud, add this in **App settings → Secrets**:
 
 ```toml
 GROQ_API_KEY = "your_groq_api_key_here"
 ```
-
-For Streamlit Community Cloud, add the same key
-inside your application's **Secrets** settings.
 """
     )
 
@@ -380,14 +330,11 @@ inside your application's **Secrets** settings.
 # =========================================================
 
 topic = st.text_area(
-
     "Research Topic",
-
     placeholder=(
         "Example: Research the impact of artificial intelligence "
-        "on healthcare"
+        "on healthcare in 2026"
     ),
-
     height=140,
 )
 
@@ -397,87 +344,68 @@ topic = st.text_area(
 # =========================================================
 
 research_button = st.button(
-
     "🔍 Research",
-
     type="primary",
-
     use_container_width=True,
 )
 
 
 # =========================================================
-# RUN RESEARCH WHEN BUTTON IS CLICKED
+# RUN RESEARCH
 # =========================================================
 
 if research_button:
 
-    # Check topic
     if not topic.strip():
-
         st.error(
             "Please enter a research topic before clicking Research."
         )
 
-    # Check API key
     elif not groq_api_key:
-
         st.error(
-            """
-GROQ_API_KEY is missing.
-
-Please add your Groq API key first.
-"""
+            "GROQ_API_KEY is missing. "
+            "Add it in Streamlit Cloud Secrets first."
         )
 
     else:
-
         try:
-
             with st.spinner(
                 "Researching the web and generating your report..."
             ):
-
                 report = run_research(
                     topic=topic,
                     api_key=groq_api_key
                 )
 
-            st.success(
-                "Research completed successfully."
-            )
+            st.success("Research completed successfully.")
 
             st.divider()
-
-            # =================================================
-            # DISPLAY REPORT
-            # =================================================
 
             st.markdown(report)
 
             st.divider()
 
-            # =================================================
-            # DOWNLOAD REPORT
-            # =================================================
-
             st.download_button(
-
                 label="⬇️ Download Research Report",
-
                 data=report,
-
                 file_name="research_report.md",
-
                 mime="text/markdown",
-
                 use_container_width=True,
             )
 
         except Exception as exc:
 
-            st.error(
-                "The research agent encountered an error."
-            )
+            error_text = str(exc)
+
+            if "rate limit" in error_text.lower():
+                st.error(
+                    "Groq rate limit reached. "
+                    "Wait a few seconds and try again."
+                )
+
+            else:
+                st.error(
+                    "The research agent encountered an error."
+                )
 
             st.exception(exc)
