@@ -3,6 +3,16 @@ from typing import Type
 
 import streamlit as st
 from crewai import Agent, Crew, LLM, Process, Task
+
+# ---------------------------------------------------------
+# CrewAI 1.15.x + Groq compatibility patch
+# ---------------------------------------------------------
+# CrewAI currently injects a `cache_breakpoint` field into agent
+# messages. Groq does not support that field and returns HTTP 400.
+# This disables that injection for this app.
+import crewai.llms.cache as _crewai_cache
+_crewai_cache.mark_cache_breakpoint = lambda message: message
+
 from crewai.tools import BaseTool
 from ddgs import DDGS
 from pydantic import BaseModel, Field
